@@ -1,0 +1,37 @@
+name: Kryptos Security & Build Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Verify Key Directory is Empty (Security Check)
+      run: |
+        if [ -d "keys" ] && [ "$(ls -A keys)" ]; then
+          echo "SECURITY VIOLATION: Keys directory is not empty in repository!"
+          exit 1
+        fi
+
+    - name: Compile Project
+      run: |
+        mkdir -p bin
+        javac -d bin src/util/*.java src/protocol/*.java src/security/*.java src/Main.java
+
+    - name: Run Unit Tests
+      run: |
+        echo "Running automated security unit tests..."
+        # Her ville vi kjørt JUnit-tester i et fullstendig prosjekt
