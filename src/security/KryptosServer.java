@@ -7,14 +7,12 @@ import java.util.Set;
 
 /**
  * KryptosServer: En sikker UDP-mottaker som implementerer IDS (Intrusion Detection)
- * ved å sjekke signaturer og forhindre Replay Attacks.
+ * og Audit Logging for alle innkommende forespørsler.
  */
 public class KryptosServer implements Runnable {
     private int port;
     private SecurityProvider security;
     private boolean running = true;
-    
-    // Enkel cache for å huske brukte nonces (Anti-Replay)
     private Set<Long> usedNonces = new HashSet<>();
 
     public KryptosServer(int port, SecurityProvider security) {
@@ -25,26 +23,30 @@ public class KryptosServer implements Runnable {
     @Override
     public void run() {
         try (DatagramSocket socket = new DatagramSocket(port)) {
-            System.out.println("[KRYPTOS SERVER] Lytter på port " + port + " (SECURE MODE)");
+            AuditLogger.logEvent("INFO", "SERVER_START", "Lytter på port " + port);
             byte[] buffer = new byte[2048];
 
             while (running) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
+                String sourceIp = packet.getAddress().getHostAddress();
                 String rawData = new String(packet.getData(), 0, packet.getLength());
-                processSecurePacket(rawData);
+                
+                processSecurePacket(rawData, sourceIp);
             }
         } catch (Exception e) {
-            System.err.println("[SERVER ERROR] " + e.getMessage());
+            AuditLogger.logEvent("CRITICAL", "SERVER_CRASH", e.getMessage());
         }
     }
 
-    private void processSecurePacket(String raw) {
+    private void processSecurePacket(String raw, String sourceIp) {
         try {
-            // Format: nonce|signature|encryptedPayload
             String[] parts = raw.split("\\|");
-            if (parts.length < 3) throw new Exception("Ugyldig pakkestruktur.");
+            if (parts.length < 3) {
+                AuditLogger.logEvent("WARNING", "MALFORMED_PACKET", "Fra: " + sourceIp);
+                return;
+            }
 
             long nonce = Long.parseLong(parts[0]);
             String signature = parts[1];
@@ -52,25 +54,24 @@ public class KryptosServer implements Runnable {
 
             // Anti-Replay sjekk
             if (usedNonces.contains(nonce)) {
-                System.err.println("[IDS ALERT] Replay Attack detektert! Nonce " + nonce + " er allerede brukt.");
+                AuditLogger.logEvent("ALERT", "REPLAY_ATTACK", "IP: " + sourceIp + " | Nonce: " + nonce);
                 return;
             }
 
-            // Signaturverifisering (Integritet)
+            // Signaturverifisering
             if (!security.verifySignature(payload, signature)) {
-                System.err.println("[IDS ALERT] Ugyldig signatur! Pakken kan være manipulert.");
+                AuditLogger.logEvent("ALERT", "INVALID_SIGNATURE", "IP: " + sourceIp + " | Payload manipulert");
                 return;
             }
 
-            // Dekryptering (Konfidensialitet)
+            // Dekryptering
             String decrypted = security.decrypt(payload);
-            
-            // Registrer nonce som brukt
             usedNonces.add(nonce);
-            System.out.println("[KRYPTOS] Autentisert melding: " + decrypted + " (Nonce: " + nonce + ")");
+            
+            AuditLogger.logEvent("INFO", "AUTHORIZED_CMD", "Kommando: " + decrypted);
 
         } catch (Exception e) {
-            System.err.println("[KRYPTOS ERROR] Kunne ikke prosessere pakke: " + e.getMessage());
+            AuditLogger.logEvent("ERROR", "PROCESSING_FAILED", sourceIp + ": " + e.getMessage());
         }
     }
 
