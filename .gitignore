@@ -1,0 +1,16 @@
+# Kryptos Keys and Archives
+keys/
+*.bin
+*.key
+
+# Java build and IDE files
+bin/
+*.class
+.project
+.settings/
+.vscode/
+.idea/
+*.iml
+
+# Logs
+logs/
