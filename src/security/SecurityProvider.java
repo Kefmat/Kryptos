@@ -1,42 +1,58 @@
 package security;
 
 import javax.crypto.Cipher;
-import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.crypto.spec.IvParameterSpec;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.Arrays;
 
 /**
- * Kryptos SecurityProvider: Håndterer AES-kryptering og HMAC-signering.
- * Dette er fundamentet for sikker kommunikasjon i prosjektet.
+ * SecurityProvider: Traffic Padding for å hindre sidekanal-angrep.
+ * Alle pakker polstres til en fast størrelse før de krypteres.
  */
 public class SecurityProvider {
     private static final String AES_ALGO = "AES/CBC/PKCS5Padding";
-    private static final String HMAC_ALGO = "HmacSHA256";
+    private static final int CONSTANT_PACKET_SIZE = 256; 
 
     private SecretKeySpec aesKey;
     private SecretKeySpec hmacKey;
+    private SecureRandom random = new SecureRandom();
 
     public SecurityProvider(byte[] aesRaw, byte[] hmacRaw) {
         this.aesKey = new SecretKeySpec(aesRaw, "AES");
-        this.hmacKey = new SecretKeySpec(hmacRaw, HMAC_ALGO);
+        this.hmacKey = new SecretKeySpec(hmacRaw, "HmacSHA256");
     }
 
     /**
-     * Krypterer en klartekst-streng og returnerer Base64-kodet pakke med IV.
+     * Krypterer data og polstrer den til CONSTANT_PACKET_SIZE.
      */
     public String encrypt(String plainText) throws Exception {
+        byte[] data = plainText.getBytes();
+        
+        // En buffer med fast størrelse og fyll med tilfeldig støy
+        byte[] paddedData = new byte[CONSTANT_PACKET_SIZE];
+        random.nextBytes(paddedData);
+        
+        // Legg inn lengden på den faktiske meldingen i første byte (enkelt format)
+        // Bruker 2 bytes for lengde for å være trygge
+        if (data.length > CONSTANT_PACKET_SIZE - 2) {
+            throw new Exception("Melding for stor for valgt pakkestørrelse");
+        }
+        
+        paddedData[0] = (byte) (data.length >> 8);
+        paddedData[1] = (byte) data.length;
+        System.arraycopy(data, 0, paddedData, 2, data.length);
+
+        // Krypter den polstrede bufferen
         byte[] iv = new byte[16];
-        new SecureRandom().nextBytes(iv);
+        random.nextBytes(iv);
         IvParameterSpec ivSpec = new IvParameterSpec(iv);
 
         Cipher cipher = Cipher.getInstance(AES_ALGO);
         cipher.init(Cipher.ENCRYPT_MODE, aesKey, ivSpec);
-
-        byte[] encrypted = cipher.doFinal(plainText.getBytes());
+        byte[] encrypted = cipher.doFinal(paddedData);
         
-        // Vi slår sammen IV og kryptert data for enkel transport
         byte[] combined = new byte[iv.length + encrypted.length];
         System.arraycopy(iv, 0, combined, 0, iv.length);
         System.arraycopy(encrypted, 0, combined, iv.length, encrypted.length);
@@ -45,12 +61,11 @@ public class SecurityProvider {
     }
 
     /**
-     * Dekrypterer en Base64-kodet pakke (IV + Data).
+     * Dekrypterer og fjerner automatisk padding/støy.
      */
     public String decrypt(String encryptedBase64) throws Exception {
         byte[] combined = Base64.getDecoder().decode(encryptedBase64);
         
-        // Pakker ut IV (de første 16 bytene)
         byte[] iv = new byte[16];
         byte[] encrypted = new byte[combined.length - 16];
         System.arraycopy(combined, 0, iv, 0, 16);
@@ -60,24 +75,21 @@ public class SecurityProvider {
         Cipher cipher = Cipher.getInstance(AES_ALGO);
         cipher.init(Cipher.DECRYPT_MODE, aesKey, ivSpec);
 
-        return new String(cipher.doFinal(encrypted));
+        byte[] paddedData = cipher.doFinal(encrypted);
+        
+        // Les ut den faktiske lengden fra de to første bytene
+        int length = ((paddedData[0] & 0xFF) << 8) | (paddedData[1] & 0xFF);
+        
+        return new String(Arrays.copyOfRange(paddedData, 2, 2 + length));
     }
 
-    /**
-     * Genererer en kryptografisk signatur (HMAC) av dataene.
-     */
     public String generateSignature(String data) throws Exception {
-        Mac sha256_HMAC = Mac.getInstance(HMAC_ALGO);
-        sha256_HMAC.init(hmacKey);
-        byte[] sig = sha256_HMAC.doFinal(data.getBytes());
-        return Base64.getEncoder().encodeToString(sig);
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(hmacKey);
+        return Base64.getEncoder().encodeToString(mac.doFinal(data.getBytes()));
     }
 
-    /**
-     * Verifiserer at en signatur er gyldig for gitte data.
-     */
     public boolean verifySignature(String data, String providedSignature) throws Exception {
-        String expectedSignature = generateSignature(data);
-        return expectedSignature.equals(providedSignature);
+        return generateSignature(data).equals(providedSignature);
     }
 }

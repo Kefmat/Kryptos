@@ -39,12 +39,14 @@ public class Main {
                 // SessionManager.getProvider() sjekker automatisk om nøkkelen må byttes
                 SecurityProvider currentKryptos = sessionManager.getProvider();
                 
+                // DATA_STREAM_PACKET vil nå polstres til en fast størrelse (Traffic Padding)
+                // Dette hindrer sidekanal-angrep basert på pakkestørrelse
                 String command = "DATA_STREAM_PACKET_" + i;
                 sendSecureCommand(currentKryptos, command, 4000L + i);
                 
                 System.out.println("Gjeldende sesjon utløper: " + sessionManager.getExpiry());
                 
-                // Vi venter 4 sekunder. Etter 3 sykluser (12 sekunder) vil manageren 
+                // Venter 4 sekunder. Etter 3 sykluser (12 sekunder) vil manageren 
                 // automatisk utføre en ny handshake fordi vi satte limit til 10 sekunder.
                 Thread.sleep(4000); 
             }
@@ -65,6 +67,7 @@ public class Main {
      * Krypterer, signerer og sender en kommando over UDP.
      */
     private static void sendSecureCommand(SecurityProvider kryptos, String cmd, long nonce) throws Exception {
+        // encrypt() legger nå automatisk til tilfeldig støy for å oppnå konstant lengde
         String enc = kryptos.encrypt(cmd);
         String sig = kryptos.generateSignature(enc);
         SecurePacket packet = new SecurePacket(enc, sig, nonce);
@@ -75,7 +78,8 @@ public class Main {
             DatagramPacket dp = new DatagramPacket(buf, buf.length, addr, 5005);
             socket.send(dp);
             
-            System.out.println("[CLIENT] Sendte sikret pakke: " + cmd);
+            // Verifiserer at Traffic Padding fungerer: Pakkelengden vil være identisk for alle iterasjoner
+            System.out.println("[CLIENT] Sendte sikret pakke (Lengde: " + enc.length() + " bytes): " + cmd);
         }
     }
 }
